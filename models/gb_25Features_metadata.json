@@ -1,0 +1,30 @@
+{
+    "features": [
+        "eqpdays",
+        "months",
+        "mou_Mean",
+        "change_mou",
+        "totmrc_Mean",
+        "avgqty",
+        "uniqsubs",
+        "avgmou",
+        "drop_vce_Mean",
+        "hnd_price",
+        "mou_cvce_Mean",
+        "change_rev",
+        "avgrev",
+        "ethnic",
+        "avg3mou",
+        "rev_Mean",
+        "ovrmou_Mean",
+        "mou_peav_Mean",
+        "totrev",
+        "totcalls",
+        "avg6mou",
+        "crclscod",
+        "ovrrev_Mean",
+        "asl_flag",
+        "opk_vce_Mean"
+    ],
+    "threshold": 0.4
+}
