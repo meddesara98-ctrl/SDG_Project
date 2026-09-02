@@ -3,7 +3,7 @@ Airflow DAG - Churn ML pipeline
 
 Pipeline:
     1. preprocessing -> train/validation/test split + parquet artifacts
-    2. training     -> GridSearchCV + threshold selection + model artifacts
+    2. training     -> XGBoost (iperparametri fissi) + soglia fissa + model artifacts
     3. evaluation   -> final evaluation on untouched test holdout
 
 The DAG uses XCom only for small dictionaries containing artifact paths.
@@ -39,8 +39,10 @@ EVALUATION_DIR = os.getenv(
     "/opt/airflow/data/evaluation",
 )
 
-THRESHOLD_TOLERANCE = float(
-    os.getenv("CHURN_THRESHOLD_TOLERANCE", "0.01")
+# Soglia di decisione fissata (vedi training.py: DECISION_THRESHOLD = 0.45).
+# Resta configurabile via env var per eventuali override senza toccare il codice.
+DECISION_THRESHOLD = float(
+    os.getenv("CHURN_DECISION_THRESHOLD", "0.50")
 )
 
 
@@ -80,7 +82,7 @@ def run_training(**context):
     model_paths = train_model(
         data_paths=data_paths,
         model_output_dir=MODEL_DIR,
-        threshold_tolerance=THRESHOLD_TOLERANCE,
+        decision_threshold=DECISION_THRESHOLD,
     )
 
     # Again, return a small dictionary of paths through XCom.
@@ -130,7 +132,7 @@ with DAG(
     dag_id="churn_ml_pipeline",
     description="End-to-end churn preprocessing, training and holdout evaluation",
     start_date=datetime(2026, 1, 1),
-    schedule=None,       # Manual trigger for now; change to "@daily" if desired.
+    schedule=None,       # Manual trigger for now; change to "@daily" if desired, or "* * * * *" for every minute
     catchup=False,
     max_active_runs=1,
     tags=["ml", "churn"],

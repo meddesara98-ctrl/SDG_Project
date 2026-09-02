@@ -17,14 +17,13 @@ Scelta della metrica
 ---------------------
 Il ROC-AUC e' la metrica primaria: e' indipendente dalla soglia e quindi
 la piu' robusta per giudicare la capacita' discriminativa del modello.
-Viene affiancata da precision/recall/F1/confusion matrix ALLA SOGLIA
-salvata in training.py, perche' quella e' la metrica operativa: descrive
-cosa succede davvero quando il modello viene usato per decidere chi
-contattare.
+Viene affiancata da precision/recall/F1/accuracy ALLA SOGLIA salvata in
+training.py, perche' quella e' la metrica operativa: descrive cosa succede
+davvero quando il modello viene usato per decidere chi contattare.
 
 La soglia NON viene ricalcolata qui sul test set: e' un parametro fissato
-in training.py sul validation set. Ricalcolarla sul test comprometterebbe
-l'holdout (data leakage nella model/threshold selection).
+in training.py (0.45) sul validation set. Ricalcolarla sul test
+comprometterebbe l'holdout (data leakage nella model/threshold selection).
 """
 
 import json
@@ -34,8 +33,7 @@ import os
 import joblib
 import pandas as pd
 from sklearn.metrics import (
-    classification_report,
-    confusion_matrix,
+    accuracy_score,
     f1_score,
     precision_score,
     recall_score,
@@ -43,9 +41,12 @@ from sklearn.metrics import (
 )
 
 # Import obbligatorio per la deserializzazione del pickle: la pipeline
-# contiene uno step MissingValueHandler la cui classe deve essere
-# importabile da questo stesso path (preprocessing.py) al momento del load.
-from pipeline.preprocessing import MissingValueHandler  # noqa: F401
+# contiene gli step MissingValueHandler e CategoricalCaster, le cui classi
+# devono essere importabili da questo stesso path (preprocessing.py) al
+# momento del load. La cast a dtype 'category' (per XGBoost) e' applicata
+# automaticamente da CategoricalCaster come parte della pipeline: non va
+# rifatta a mano qui.
+from pipeline.preprocessing import CategoricalCaster, MissingValueHandler  # noqa: F401
 
 logger = logging.getLogger("inference")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -124,38 +125,36 @@ def evaluate_on_holdout(model_path: str, metadata_path: str, data_paths: dict,
     y_pred = predictions["churn_pred"].values
 
     roc_auc = roc_auc_score(y_test, y_proba)
-    f1 = f1_score(y_test, y_pred)
-    precision = precision_score(y_test, y_pred)
-    recall = recall_score(y_test, y_pred)
-    tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
-    report = classification_report(y_test, y_pred, digits=4)
+    precision = precision_score(y_test, y_pred, zero_division=0)
+    recall = recall_score(y_test, y_pred, zero_division=0)
+    f1 = f1_score(y_test, y_pred, zero_division=0)
+    accuracy = accuracy_score(y_test, y_pred)
 
     # --- Logging esplicito nel log del task Airflow ---
     logger.info("=" * 60)
-    logger.info("VALUTAZIONE FINALE SU TEST SET (HOLDOUT)")
+    logger.info("TEST SET- FINAL EVALUATION")
     logger.info("=" * 60)
-    logger.info("Soglia di decisione utilizzata: %.2f", metadata["threshold"])
-    logger.info("ROC-AUC : %.4f  (metrica primaria, indipendente dalla soglia)", roc_auc)
-    logger.info("F1      : %.4f", f1)
+    logger.info("Classifcation Threshold: %.2f", metadata["threshold"])
+    logger.info("ROC-AUC  : %.4f  (primary metric, independent of the threshold)", roc_auc)
     logger.info("Precision: %.4f", precision)
-    logger.info("Recall  : %.4f", recall)
-    logger.info("Confusion matrix -> TN=%d, FP=%d, FN=%d, TP=%d", tn, fp, fn, tp)
-    logger.info("\n%s", report)
+    logger.info("Recall   : %.4f", recall)
+    logger.info("F1       : %.4f", f1)
+    logger.info("Accuracy : %.4f", accuracy)
 
     metrics = {
         "threshold_used": metadata["threshold"],
         "roc_auc": float(roc_auc),
-        "f1": float(f1),
         "precision": float(precision),
         "recall": float(recall),
-        "confusion_matrix": {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)},
+        "f1": float(f1),
+        "accuracy": float(accuracy),
         "n_test_samples": int(len(X_test)),
     }
 
     metrics_path = os.path.join(output_dir, "test_evaluation_metrics.json")
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=4)
-    logger.info("Metriche salvate in: %s", metrics_path)
+    logger.info("Metrics saved to: %s", metrics_path)
 
     return metrics
 

@@ -40,8 +40,9 @@ class MissingValueHandler(BaseEstimator, TransformerMixin):
     anche se inference.py non la istanzia mai direttamente).
     """
 
-    def __init__(self, threshold: float = 30):
+    def __init__(self, threshold: float = 30, impute_numeric_values: bool = False):
         self.threshold = threshold
+        self.impute_numeric_values = impute_numeric_values
 
     def fit(self, X, y=None):
         X = X.copy()
@@ -60,9 +61,15 @@ class MissingValueHandler(BaseEstimator, TransformerMixin):
             )
 
         remaining_num_cols = [c for c in num_cols if c not in self.cols_to_drop_]
-        self.medians_ = {col: X[col].median() for col in remaining_num_cols}
+        if self.impute_numeric_values:
+            self.medians_ = {col: X[col].median() for col in remaining_num_cols}
+        else:
+            self.medians_ = {}
+            logger.info(
+                "MissingValueHandler: impute_numeric=False -> i NaN sulle colonne "
+                "numeriche rimanenti NON vengono imputati (gestiti nativamente da XGBoost)."
+            )
         self.remaining_cat_cols_ = [c for c in cat_cols if c not in self.cols_to_drop_]
-
         return self
 
     def transform(self, X):
@@ -75,6 +82,48 @@ class MissingValueHandler(BaseEstimator, TransformerMixin):
             if col in X.columns:
                 X[col] = X[col].fillna("MISSING")
         return X
+
+
+class CategoricalCaster(BaseEstimator, TransformerMixin):
+    """
+    Converte le colonne categoriche testuali (CAT_COLS) in dtype pandas
+    'category', cosi' che XGBoost (enable_categorical=True) le gestisca
+    nativamente, senza one-hot encoding.
+
+    Le categorie osservate in fit() (sul train) vengono congelate: in
+    transform() un valore non visto in fase di train viene mappato a NaN
+    (che XGBoost tratta come missing) invece di generare una categoria
+    "fantasma" solo in val/test. Questo evita disallineamenti tra gli split
+    e comportamenti non riproducibili in inferenza.
+
+    NOTA IMPORTANTE per il deploy: come MissingValueHandler, questa classe
+    vive qui (preprocessing.py) e deve essere importabile da questo stesso
+    path sia da training.py (per costruire la Pipeline) sia da evaluation.py
+    (obbligatorio per la deserializzazione del pickle via joblib).
+    """
+
+    def __init__(self, cat_cols: list):
+        self.cat_cols = cat_cols
+
+    def fit(self, X, y=None):
+        self.categories_ = {}
+        for col in self.cat_cols:
+            if col in X.columns:
+                self.categories_[col] = sorted(X[col].dropna().unique().tolist())
+            else:
+                logger.warning(
+                    "CategoricalCaster: colonna categorica attesa '%s' non presente "
+                    "nell'input (probabilmente rimossa da MissingValueHandler).", col
+                )
+        return self
+
+    def transform(self, X):
+        X = X.copy()
+        for col, cats in self.categories_.items():
+            if col in X.columns:
+                X[col] = pd.Categorical(X[col], categories=cats)
+        return X
+
 
 # ---------------------------------------------------------------------------
 # Config congelata: le Top 25 feature emerse dalla permutation importance
@@ -108,6 +157,11 @@ TOP_25_FEATURES = [
     "asl_flag",
     "opk_vce_Mean",
 ]
+
+# Colonne categoriche testuali tra le Top 25: vengono castate a dtype
+# 'category' in training.py/evaluation.py (via CategoricalCaster) e gestite
+# nativamente da XGBoost (enable_categorical=True), senza one-hot encoding.
+CAT_COLS = ["ethnic", "crclscod", "asl_flag"]
 
 TARGET_COL = "churn"
 INDEX_COL = "Customer_ID"
